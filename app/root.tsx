@@ -23,12 +23,22 @@ export const links: Route.LinksFunction = () => [
 	},
 ];
 
+export function headers() {
+	return {
+		"Cache-Control": "no-store",
+		"Referrer-Policy": "no-referrer",
+		"X-Robots-Tag": "noindex, nofollow",
+	};
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		<html lang="zh-CN">
 			<head>
 				<meta charSet="utf-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1" />
+				<meta name="referrer" content="no-referrer" />
+				<meta name="robots" content="noindex, nofollow" />
 				<Meta />
 				<Links />
 			</head>
