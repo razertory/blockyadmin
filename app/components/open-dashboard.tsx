@@ -10,6 +10,14 @@ export function OpenDashboard({ email, compact = false }: { email: string; compa
 		lock.current = true;
 		setPending(true);
 		setError(null);
+		// Open during the click so the browser still treats this as a user gesture after the request.
+		const tab = window.open("about:blank", "_blank");
+		if (!tab) {
+			setError("浏览器拦截了新标签页，请允许弹窗后重试");
+			lock.current = false;
+			setPending(false);
+			return;
+		}
 		try {
 			const response = await fetch("/api/dashboard-access", {
 				method: "POST",
@@ -20,14 +28,16 @@ export function OpenDashboard({ email, compact = false }: { email: string; compa
 			const body = (await response.json().catch(() => null)) as { url?: unknown; error?: unknown } | null;
 			const url = typeof body?.url === "string" ? body.url : "";
 			if (!response.ok || !url.startsWith("https://")) {
+				tab.close();
 				setError(typeof body?.error === "string" ? body.error : "无法签发登录链接");
-				lock.current = false;
-				setPending(false);
 				return;
 			}
-			window.location.assign(url);
+			tab.opener = null;
+			tab.location.replace(url);
 		} catch {
+			tab.close();
 			setError("网络错误，请重试");
+		} finally {
 			lock.current = false;
 			setPending(false);
 		}
@@ -46,7 +56,7 @@ export function OpenDashboard({ email, compact = false }: { email: string; compa
 			{error ? <p className="mt-1 text-xs text-bad">{error}</p> : null}
 			{compact ? null : (
 				<p className="max-w-md text-xs leading-5 text-stone-500">
-					链接 60 秒内有效，打开后会进入该用户 30 分钟的只读 Dashboard。当前页面会离开管理后台，可用浏览器后退返回。
+					链接 60 秒内有效，会在新标签页打开该用户 30 分钟的只读 Dashboard。
 				</p>
 			)}
 		</div>
