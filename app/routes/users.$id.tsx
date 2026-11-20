@@ -15,6 +15,7 @@ import {
 import { nullableNumber, planSourceLabel, statusTone, text } from "../lib/format";
 import { noStoreHeaders, pageOffset, UUID } from "../lib/http";
 import { requireAdmin } from "../lib/session.server";
+import { userCountryNames } from "../lib/umami.server";
 
 export function meta({ data }: Route.MetaArgs) {
 	const name = data && "profile" in data && data.profile ? data.profile.name : "用户";
@@ -40,12 +41,13 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 		throw error;
 	}
 	if (!profile) throw new Response("用户不存在", { status: 404, headers: noStoreHeaders() });
-	const [billing, assets, subscriptions, planGrants, creditGrants] = await Promise.all([
+	const [billing, assets, subscriptions, planGrants, creditGrants, countries] = await Promise.all([
 		loadSection(findBilling(env, profile.email, profile.id)),
 		loadSection(userAssets(env, profile.id, offset)),
 		loadSection(userRows(env, "subscriptions", profile.id, "created_at.desc")),
 		loadSection(userRows(env, "plan_grants", profile.id, "created_at.desc")),
 		loadSection(userRows(env, "credit_grants", profile.id, "created_at.desc")),
+		userCountryNames([profile.id]),
 	]);
 	const error = [billing, assets, subscriptions, planGrants, creditGrants]
 		.flatMap((section) => (section.ok ? [] : [section.error]))
@@ -58,6 +60,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 		subscriptions: subscriptions.ok ? subscriptions.value : [],
 		planGrants: planGrants.ok ? planGrants.value : [],
 		creditGrants: creditGrants.ok ? creditGrants.value : [],
+		country: countries.get(profile.id) ?? null,
 		error: error || null,
 	};
 }
@@ -79,12 +82,13 @@ function emptyUser(offset: number, error: string) {
 		subscriptions: [] as Record<string, unknown>[],
 		planGrants: [] as Record<string, unknown>[],
 		creditGrants: [] as Record<string, unknown>[],
+		country: null,
 		error,
 	};
 }
 
 export default function UserDetail({ loaderData, params }: Route.ComponentProps) {
-	const { profile, billing, assets, subscriptions, planGrants, creditGrants, error } = loaderData;
+	const { profile, billing, assets, subscriptions, planGrants, creditGrants, country, error } = loaderData;
 	if (!profile) {
 		return (
 			<Shell>
@@ -122,6 +126,7 @@ export default function UserDetail({ loaderData, params }: Route.ComponentProps)
 				<Fact label="邮箱验证" value={profile.emailVerifiedAt ? "已验证" : "未验证"} />
 				<Fact label="Google" value={profile.googleLinked ? "已绑定" : "未绑定"} />
 				<Fact label="注册时间" value={<Time value={profile.createdAt} />} />
+				<Fact label="国家" value={country ?? "—"} />
 			</section>
 
 			<Panel title="订阅">

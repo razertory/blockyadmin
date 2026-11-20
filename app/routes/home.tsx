@@ -7,6 +7,7 @@ import { billingSummary, ForgeError, listFilteredUsers, listUsers, visibleAssetC
 import { planSourceLabel, statusTone } from "../lib/format";
 import { noStoreHeaders, pageOffset } from "../lib/http";
 import { requireAdmin } from "../lib/session.server";
+import { userCountryNames } from "../lib/umami.server";
 
 export function meta({}: Route.MetaArgs) {
 	return [{ title: "用户 · BlockyForge 管理" }, { name: "robots", content: "noindex, nofollow" }];
@@ -30,12 +31,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 				: listUsers(env, q, offset).then((result) => ({ users: result.users, hasMore: result.hasMore, total: null })),
 			billingSummary(env),
 		]);
-		const counts = await visibleAssetCounts(env, page.users.map((user) => user.id));
-		const users = page.users.map((user) => ({ ...user, assetCount: counts.get(user.id) ?? 0 }));
+		const [counts, countries] = await Promise.all([
+			visibleAssetCounts(env, page.users.map((user) => user.id)),
+			userCountryNames(page.users.map((user) => user.id)),
+		]);
+		const users = page.users.map((user) => ({
+			...user,
+			assetCount: counts.get(user.id) ?? 0,
+			country: countries.get(user.id) ?? null,
+		}));
 		return { q, offset, billing, users, hasMore: page.hasMore, total: page.total, summary, error: null };
 	} catch (error) {
 		if (error instanceof ForgeError) {
-			return { q, offset, billing, users: [] as AdminUser[], hasMore: false, total: null, summary: null, error: error.message };
+			return { q, offset, billing, users: [] as (AdminUser & { country: string | null })[], hasMore: false, total: null, summary: null, error: error.message };
 		}
 		throw error;
 	}
@@ -82,7 +90,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 			</div>
 			{error ? <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-bad">{error}</p> : null}
 			<div className="mt-4 overflow-x-auto rounded-xl border border-line bg-card">
-				<table className="w-full min-w-[1040px] text-left text-sm">
+				<table className="w-full min-w-[1120px] text-left text-sm">
 					<thead className="border-b border-line text-xs text-stone-500">
 						<tr>
 							<th className="px-3 py-2 font-medium">用户</th>
@@ -90,6 +98,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 							<th className="px-3 py-2 font-medium">订阅</th>
 							<th className="px-3 py-2 font-medium">额度</th>
 							<th className="px-3 py-2 font-medium">素材</th>
+							<th className="px-3 py-2 font-medium">国家</th>
 							<th className="px-3 py-2 font-medium">注册</th>
 							<th className="px-3 py-2 font-medium" />
 						</tr>
@@ -97,7 +106,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					<tbody>
 						{users.length === 0 ? (
 							<tr>
-								<td colSpan={7} className="px-3 py-8 text-center text-stone-500">
+								<td colSpan={8} className="px-3 py-8 text-center text-stone-500">
 									{error ? "没有可显示的用户" : "没有匹配的用户"}
 								</td>
 							</tr>
@@ -139,6 +148,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 										{user.currentCredits} / {user.creditLimit}
 									</td>
 									<td className="px-3 py-3 tabular-nums">{user.assetCount}</td>
+									<td className="px-3 py-3 whitespace-nowrap">{user.country ?? "—"}</td>
 									<td className="px-3 py-3 whitespace-nowrap">
 										<Time value={user.createdAt} />
 									</td>
