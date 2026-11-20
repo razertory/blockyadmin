@@ -57,6 +57,8 @@ const TABLES = new Set([
 	"subscriptions",
 	"plan_grants",
 	"credit_grants",
+	"models",
+	"game_configs",
 ]);
 
 export type BillingFilter = "subscribed" | "checked_out" | "unsubscribed" | "checkout_unpaid";
@@ -159,6 +161,55 @@ export async function userProfile(env: Env, id: string): Promise<UserProfile | n
 		emailVerifiedAt: nullableText(row.email_verified_at),
 		googleLinked: Boolean(nullableText(row.google_id)),
 	};
+}
+
+export type LatestModel = {
+	assetId: string;
+	assetName: string;
+	userId: string;
+	email: string;
+	gamingId: string;
+	createdAt: string;
+	hasThumbnail: boolean;
+};
+
+export async function latestModels(env: Env, offset: number) {
+	const seen = new Set<string>();
+	const models: { assetId: string; createdAt: string }[] = [];
+	await eachPage(env, "models", { select: "id,asset_id,created_at", order: "created_at.desc,id.desc" }, (row) => {
+		const assetId = text(row.asset_id);
+		if (assetId && !seen.has(assetId)) {
+			seen.add(assetId);
+			models.push({ assetId, createdAt: text(row.created_at) });
+		}
+	});
+	const assets = new Map<string, Record<string, unknown>>();
+	await eachPage(env, "assets", { select: "id,user_id,name,thumbnail_storage_key,meta", order: "id.asc" }, (row) => {
+		if (isVisibleAsset(row.meta)) assets.set(text(row.id), row);
+	});
+	const visible = models.filter((model) => assets.has(model.assetId));
+	const page = visible.slice(offset, offset + 20);
+	const rows = await Promise.all(page.map(async (model): Promise<LatestModel | null> => {
+		const asset = assets.get(model.assetId)!;
+		const userId = text(asset.user_id);
+		const [users, configs] = await Promise.all([
+			queryTable(env, "users", { select: "id,email", id: `eq.${userId}`, limit: 1 }),
+			queryTable(env, "game_configs", { select: "gaming_id", asset_id: `eq.${model.assetId}`, limit: 100 }),
+		]);
+		const user = users.data[0];
+		if (!user) return null;
+		const ids = configs.data.map((row) => text(row.gaming_id)).filter((id) => id && id !== "java.entity.mythicmobs");
+		return {
+			assetId: model.assetId,
+			assetName: text(asset.name) || "未命名",
+			userId,
+			email: text(user.email),
+			gamingId: ids.length === 1 ? ids[0] : "modeling.generic",
+			createdAt: model.createdAt,
+			hasThumbnail: Boolean(nullableText(asset.thumbnail_storage_key)),
+		};
+	}));
+	return { models: rows.filter((row): row is LatestModel => row !== null), total: visible.length };
 }
 
 export async function visibleAssetCounts(env: Env, userIds: string[]) {

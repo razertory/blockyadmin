@@ -12,11 +12,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
 						</Link>
 						<p className="text-xs text-stone-500">查询用户、付费和素材，并签发只读登录</p>
 					</div>
+					<nav className="flex items-center gap-3 text-sm" aria-label="管理导航">
+						<Link to="/" className="text-stone-600 hover:text-ink" prefetch="none">用户</Link>
+						<Link to="/models" className="text-stone-600 hover:text-ink" prefetch="none">模型</Link>
 					<Form method="post" action="/logout">
 						<button type="submit" className="rounded-md px-2 py-1 text-sm text-stone-600 hover:bg-stone-100">
 							退出
 						</button>
 					</Form>
+					</nav>
 				</div>
 			</header>
 			<main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
