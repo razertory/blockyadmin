@@ -58,6 +58,7 @@ const TABLES = new Set([
 	"plan_grants",
 	"credit_grants",
 	"models",
+	"model_previews",
 	"game_configs",
 ]);
 
@@ -175,12 +176,13 @@ export type LatestModel = {
 
 export async function latestModels(env: Env, offset: number) {
 	const seen = new Set<string>();
-	const models: { assetId: string; createdAt: string }[] = [];
+	const models: { assetId: string; modelId: string; createdAt: string }[] = [];
 	await eachPage(env, "models", { select: "id,asset_id,created_at", order: "created_at.desc,id.desc" }, (row) => {
 		const assetId = text(row.asset_id);
-		if (assetId && !seen.has(assetId)) {
+		const modelId = text(row.id);
+		if (assetId && modelId && !seen.has(assetId)) {
 			seen.add(assetId);
-			models.push({ assetId, createdAt: text(row.created_at) });
+			models.push({ assetId, modelId, createdAt: text(row.created_at) });
 		}
 	});
 	const assets = new Map<string, Record<string, unknown>>();
@@ -192,9 +194,10 @@ export async function latestModels(env: Env, offset: number) {
 	const rows = await Promise.all(page.map(async (model): Promise<LatestModel | null> => {
 		const asset = assets.get(model.assetId)!;
 		const userId = text(asset.user_id);
-		const [users, configs] = await Promise.all([
+		const [users, configs, main] = await Promise.all([
 			queryTable(env, "users", { select: "id,email", id: `eq.${userId}`, limit: 1 }),
 			queryTable(env, "game_configs", { select: "gaming_id", asset_id: `eq.${model.assetId}`, limit: 100 }),
+			modelPreviewMain(env, model.modelId),
 		]);
 		const user = users.data[0];
 		if (!user) return null;
@@ -206,7 +209,7 @@ export async function latestModels(env: Env, offset: number) {
 			email: text(user.email),
 			gamingId: ids.length === 1 ? ids[0] : "modeling.generic",
 			createdAt: model.createdAt,
-			hasThumbnail: Boolean(nullableText(asset.thumbnail_storage_key)),
+			hasThumbnail: Boolean(main || nullableText(asset.thumbnail_storage_key)),
 		};
 	}));
 	return { models: rows.filter((row): row is LatestModel => row !== null), total: visible.length };
@@ -220,12 +223,50 @@ export async function visibleAssetCounts(env: Env, userIds: string[]) {
 export async function userAssets(env: Env, userId: string, offset: number) {
 	const rows = await assetPages(env, userId, "id,name,status,prompt,cube_count,bone_count,error_message,created_at,updated_at,thumbnail_storage_key,meta", "updated_at.desc,id.desc");
 	const visible = rows.flatMap((row) => (isVisibleAsset(row.meta) ? toAssetRow(row) : []));
+	const page = visible.slice(offset, offset + 20);
+	const assets = await Promise.all(page.map(async (asset) => ({
+		...asset,
+		hasThumbnail: Boolean(await latestModelPreview(env, asset.id) || asset.hasThumbnail),
+	})));
 	return {
-		assets: visible.slice(offset, offset + 20),
+		assets,
 		count: visible.length,
 		internalCount: rows.length - visible.length,
 		offset,
 	};
+}
+
+async function latestModelPreview(env: Env, assetId: string) {
+	const found = await queryTable(env, "models", {
+		select: "id",
+		asset_id: `eq.${assetId}`,
+		order: "created_at.desc,id.desc",
+		limit: 1,
+	});
+	const modelId = text(found.data[0]?.id);
+	return modelId ? modelPreviewMain(env, modelId) : null;
+}
+
+async function modelPreviewMain(env: Env, modelId: string) {
+	const previews = await queryTable(env, "model_previews", {
+		select: "images",
+		model_id: `eq.${modelId}`,
+		limit: 1,
+	});
+	return previewMain(previews.data[0]?.images);
+}
+
+function previewMain(value: unknown): string | null {
+	if (typeof value === "string") {
+		try {
+			return previewMain(JSON.parse(value) as unknown);
+		} catch {
+			return null;
+		}
+	}
+	if (!isRecord(value)) return null;
+	const main = value.main;
+	return typeof main === "string" && main.length > 0 ? main : null;
 }
 
 async function countVisibleAssets(env: Env, userId: string) {
