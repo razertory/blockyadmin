@@ -3,12 +3,14 @@ import { Link } from "react-router";
 import type { Route } from "./+types/users.$id";
 import { CopyButton } from "../components/copy-button";
 import { OpenDashboard } from "../components/open-dashboard";
+import { PayTags } from "../components/pay-tags";
 import { Shell, Time } from "../components/shell";
 import {
 	findBilling,
 	ForgeError,
 	userAssets,
 	userProfile,
+	userPurchasedCredits,
 	userRows,
 	type AssetRow,
 } from "../lib/blockyforge.server";
@@ -41,15 +43,16 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 		throw error;
 	}
 	if (!profile) throw new Response("用户不存在", { status: 404, headers: noStoreHeaders() });
-	const [billing, assets, subscriptions, planGrants, creditGrants, countries] = await Promise.all([
+	const [billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits, countries] = await Promise.all([
 		loadSection(findBilling(env, profile.email, profile.id)),
 		loadSection(userAssets(env, profile.id, offset)),
 		loadSection(userRows(env, "subscriptions", profile.id, "created_at.desc")),
 		loadSection(userRows(env, "plan_grants", profile.id, "created_at.desc")),
 		loadSection(userRows(env, "credit_grants", profile.id, "created_at.desc")),
+		loadSection(userPurchasedCredits(env, profile.id)),
 		userCountryNames([profile.id]),
 	]);
-	const error = [billing, assets, subscriptions, planGrants, creditGrants]
+	const error = [billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits]
 		.flatMap((section) => (section.ok ? [] : [section.error]))
 		.filter((message, index, all) => all.indexOf(message) === index)
 		.join(" ");
@@ -60,6 +63,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 		subscriptions: subscriptions.ok ? subscriptions.value : [],
 		planGrants: planGrants.ok ? planGrants.value : [],
 		creditGrants: creditGrants.ok ? creditGrants.value : [],
+		purchasedCredits: purchasedCredits.ok ? purchasedCredits.value : false,
 		country: countries.get(profile.id) ?? null,
 		error: error || null,
 	};
@@ -82,13 +86,14 @@ function emptyUser(offset: number, error: string) {
 		subscriptions: [] as Record<string, unknown>[],
 		planGrants: [] as Record<string, unknown>[],
 		creditGrants: [] as Record<string, unknown>[],
+		purchasedCredits: false,
 		country: null,
 		error,
 	};
 }
 
 export default function UserDetail({ loaderData, params }: Route.ComponentProps) {
-	const { profile, billing, assets, subscriptions, planGrants, creditGrants, country, error } = loaderData;
+	const { profile, billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits, country, error } = loaderData;
 	if (!profile) {
 		return (
 			<Shell>
@@ -108,7 +113,10 @@ export default function UserDetail({ loaderData, params }: Route.ComponentProps)
 						<div className="flex h-12 w-12 items-center justify-center rounded-full bg-stone-200 text-sm">{profile.name.slice(0, 1) || "?"}</div>
 					)}
 					<div>
-						<h1 className="text-xl font-semibold">{profile.name || "未命名"}</h1>
+						<div className="flex flex-wrap items-center gap-2">
+							<h1 className="text-xl font-semibold">{profile.name || "未命名"}</h1>
+							<PayTags subscribed={Boolean(billing?.subscriptionStatus)} credits={purchasedCredits} />
+						</div>
 						<p className="text-sm text-stone-600">{profile.email}</p>
 					</div>
 				</div>

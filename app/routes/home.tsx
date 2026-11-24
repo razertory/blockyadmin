@@ -2,8 +2,9 @@ import { Form, Link } from "react-router";
 import type { Route } from "./+types/home";
 import { CopyButton } from "../components/copy-button";
 import { OpenDashboard } from "../components/open-dashboard";
+import { PayTags } from "../components/pay-tags";
 import { Shell, Time } from "../components/shell";
-import { billingSummary, ForgeError, listFilteredUsers, listUsers, visibleAssetCounts, type AdminUser, type BillingFilter, type BillingSummary } from "../lib/blockyforge.server";
+import { billingSummary, creditPurchaserIds, ForgeError, listFilteredUsers, listUsers, visibleAssetCounts, type AdminUser, type BillingFilter, type BillingSummary } from "../lib/blockyforge.server";
 import { planSourceLabel, statusTone } from "../lib/format";
 import { noStoreHeaders, pageOffset } from "../lib/http";
 import { requireAdmin } from "../lib/session.server";
@@ -25,11 +26,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 	const offset = pageOffset(url.searchParams.get("offset"));
 	const billing = billingFilter(url.searchParams.get("billing"));
 	try {
+		const purchasers = await creditPurchaserIds(env);
 		const [page, summary] = await Promise.all([
 			billing
-				? filteredPage(env, q, billing, offset)
+				? filteredPage(env, q, billing, offset, purchasers)
 				: listUsers(env, q, offset).then((result) => ({ users: result.users, hasMore: result.hasMore, total: null })),
-			billingSummary(env),
+			billingSummary(env, purchasers),
 		]);
 		const [counts, countries] = await Promise.all([
 			visibleAssetCounts(env, page.users.map((user) => user.id)),
@@ -39,18 +41,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 			...user,
 			assetCount: counts.get(user.id) ?? 0,
 			country: countries.get(user.id) ?? null,
+			purchasedCredits: purchasers.has(user.id),
 		}));
 		return { q, offset, billing, users, hasMore: page.hasMore, total: page.total, summary, error: null };
 	} catch (error) {
 		if (error instanceof ForgeError) {
-			return { q, offset, billing, users: [] as (AdminUser & { country: string | null })[], hasMore: false, total: null, summary: null, error: error.message };
+			return { q, offset, billing, users: [] as ListedUser[], hasMore: false, total: null, summary: null, error: error.message };
 		}
 		throw error;
 	}
 }
 
-async function filteredPage(env: Env, search: string, billing: BillingFilter, offset: number) {
-	const matched = await listFilteredUsers(env, search, billing);
+type ListedUser = AdminUser & { country: string | null; purchasedCredits: boolean };
+
+async function filteredPage(env: Env, search: string, billing: BillingFilter, offset: number, purchasers: ReadonlySet<string>) {
+	const matched = await listFilteredUsers(env, search, billing, purchasers);
 	return { users: matched.slice(offset, offset + 20), hasMore: offset + 20 < matched.length, total: matched.length };
 }
 
@@ -114,9 +119,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 							users.map((user) => (
 								<tr key={user.id} className="border-t border-line align-top">
 									<td className="px-3 py-3">
-										<Link to={`/users/${user.id}`} className="font-medium hover:underline" prefetch="none">
-											{user.name || "未命名"}
-										</Link>
+										<div className="flex flex-wrap items-center gap-2">
+											<Link to={`/users/${user.id}`} className="font-medium hover:underline" prefetch="none">
+												{user.name || "未命名"}
+											</Link>
+											<PayTags subscribed={Boolean(user.subscriptionStatus)} credits={user.purchasedCredits} />
+										</div>
 										<div className="text-stone-600">{user.email}</div>
 										<div className="mt-1 font-mono text-xs text-stone-400">{user.id}</div>
 									</td>
@@ -125,7 +133,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 										<div className="text-xs text-stone-500">{planSourceLabel(user.planSource)}</div>
 										{user.stripeCustomerId ? (
 											<div className="mt-1">
-												{user.subscriptionStatus ? null : <div className="text-xs text-amber-800">已结账，未支付</div>}
+												{user.subscriptionStatus || user.purchasedCredits ? null : <div className="text-xs text-amber-800">结账未付款</div>}
 												<div className="flex items-center gap-1">
 													<span className="font-mono text-xs text-stone-600">{user.stripeCustomerId}</span>
 													<CopyButton value={user.stripeCustomerId} />
@@ -180,12 +188,14 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 const filters: { value: BillingFilter | null; label: string }[] = [
 	{ value: null, label: "全部" },
 	{ value: "subscribed", label: "订阅的" },
+	{ value: "credits", label: "积分用户" },
 	{ value: "checked_out", label: "已经结账的" },
+	{ value: "checkout_unpaid", label: "结账未付款" },
 	{ value: "unsubscribed", label: "没有订阅的" },
 ];
 
 function billingFilter(value: string | null): BillingFilter | null {
-	if (value === "subscribed" || value === "checked_out" || value === "unsubscribed" || value === "checkout_unpaid") return value;
+	if (value === "subscribed" || value === "checked_out" || value === "unsubscribed" || value === "checkout_unpaid" || value === "credits") return value;
 	return null;
 }
 
@@ -193,10 +203,11 @@ function Summary({ summary, billing }: { summary: BillingSummary; billing: Billi
 	const items = [
 		{ label: "用户", value: summary.total, billing: null },
 		{ label: "已订阅", value: summary.subscribed, billing: "subscribed" as const },
-		{ label: "结账未订阅", value: summary.checkedOutUnsubscribed, billing: "checkout_unpaid" as const },
+		{ label: "积分用户", value: summary.creditPurchasers, billing: "credits" as const },
+		{ label: "结账未付款", value: summary.checkoutUnpaid, billing: "checkout_unpaid" as const },
 	];
 	return (
-		<section className="grid gap-3 sm:grid-cols-3">
+		<section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
 			{items.map((item) => {
 				const active = billing === item.billing;
 				return (

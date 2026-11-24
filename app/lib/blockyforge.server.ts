@@ -62,34 +62,56 @@ const TABLES = new Set([
 	"game_configs",
 ]);
 
-export type BillingFilter = "subscribed" | "checked_out" | "unsubscribed" | "checkout_unpaid";
+export type BillingFilter = "subscribed" | "checked_out" | "unsubscribed" | "checkout_unpaid" | "credits";
 
 export type BillingSummary = {
 	total: number;
 	subscribed: number;
-	checkedOutUnsubscribed: number;
+	creditPurchasers: number;
+	checkoutUnpaid: number;
 };
 
-export function matchesBilling(user: AdminUser, filter: BillingFilter) {
+export async function creditPurchaserIds(env: Env): Promise<Set<string>> {
+	const ids = new Set<string>();
+	await eachPage(env, "credit_grants", { select: "user_id", source: "eq.purchase", order: "id.asc" }, (row) => {
+		const id = text(row.user_id);
+		if (id) ids.add(id);
+	});
+	return ids;
+}
+
+export async function userPurchasedCredits(env: Env, userId: string): Promise<boolean> {
+	const result = await queryTable(env, "credit_grants", {
+		select: "id",
+		user_id: `eq.${userId}`,
+		source: "eq.purchase",
+		limit: 1,
+	});
+	return result.data.length > 0;
+}
+
+export function matchesBilling(user: AdminUser, filter: BillingFilter, purchasers: ReadonlySet<string>) {
+	const purchased = purchasers.has(user.id);
 	if (filter === "subscribed") return Boolean(user.subscriptionStatus);
 	if (filter === "checked_out") return Boolean(user.stripeCustomerId);
-	if (filter === "checkout_unpaid") return Boolean(user.stripeCustomerId) && !user.subscriptionStatus;
+	if (filter === "credits") return purchased;
+	if (filter === "checkout_unpaid") return Boolean(user.stripeCustomerId) && !user.subscriptionStatus && !purchased;
 	return !user.subscriptionStatus;
 }
 
-export async function billingSummary(env: Env): Promise<BillingSummary> {
+export async function billingSummary(env: Env, purchasers: ReadonlySet<string>): Promise<BillingSummary> {
 	const total = (await queryTable(env, "users", { select: "id", limit: 1 })).count;
 	const subscribed = new Set<string>();
 	await eachPage(env, "subscriptions", { select: "user_id", order: "user_id.asc" }, (row) => {
 		const id = text(row.user_id);
 		if (id) subscribed.add(id);
 	});
-	let checkedOutUnsubscribed = 0;
+	let checkoutUnpaid = 0;
 	await eachPage(env, "users", { select: "id,stripe_customer_id", stripe_customer_id: "like.*", order: "id.asc" }, (row) => {
 		const id = text(row.id);
-		if (id && nullableText(row.stripe_customer_id) && !subscribed.has(id)) checkedOutUnsubscribed += 1;
+		if (id && nullableText(row.stripe_customer_id) && !subscribed.has(id) && !purchasers.has(id)) checkoutUnpaid += 1;
 	});
-	return { total, subscribed: subscribed.size, checkedOutUnsubscribed };
+	return { total, subscribed: subscribed.size, creditPurchasers: purchasers.size, checkoutUnpaid };
 }
 
 async function eachPage(env: Env, table: string, params: Record<string, string>, visit: (row: Record<string, unknown>) => void) {
@@ -100,13 +122,13 @@ async function eachPage(env: Env, table: string, params: Record<string, string>,
 	}
 }
 
-export async function listFilteredUsers(env: Env, search: string, filter: BillingFilter) {
+export async function listFilteredUsers(env: Env, search: string, filter: BillingFilter, purchasers: ReadonlySet<string>) {
 	const users: AdminUser[] = [];
 	const seen = new Set<string>();
 	for (let offset = 0; offset <= 1_000_000; offset += 20) {
 		const page = await listUsers(env, search, offset);
 		for (const user of page.users) {
-			if (seen.has(user.id) || !matchesBilling(user, filter)) continue;
+			if (seen.has(user.id) || !matchesBilling(user, filter, purchasers)) continue;
 			seen.add(user.id);
 			users.push(user);
 		}
