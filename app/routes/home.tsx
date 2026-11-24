@@ -65,7 +65,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 		<Shell>
 			{summary ? <Summary summary={summary} billing={billing} /> : null}
 			<Form method="get" className="mt-4 flex flex-wrap items-end gap-2">
-				<label className="min-w-64 flex-1 text-sm">
+				<label className="min-w-0 flex-1 basis-48 text-sm">
 					<span className="mb-1 block text-stone-600">邮箱或名字</span>
 					<input
 						name="q"
@@ -94,7 +94,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				{total !== null ? <span className="text-stone-500">{total} 人</span> : null}
 			</div>
 			{error ? <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-bad">{error}</p> : null}
-			<div className="mt-4 overflow-x-auto rounded-xl border border-line bg-card">
+			<div className="mt-4 hidden overflow-x-auto rounded-xl border border-line bg-card md:block">
 				<table className="w-full min-w-[1120px] text-left text-sm">
 					<thead className="border-b border-line text-xs text-stone-500">
 						<tr>
@@ -169,6 +169,72 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					</tbody>
 				</table>
 			</div>
+			<ul className="mt-4 space-y-3 md:hidden">
+				{users.length === 0 ? (
+					<li className="rounded-xl border border-line bg-card px-3 py-8 text-center text-sm text-stone-500">{error ? "没有可显示的用户" : "没有匹配的用户"}</li>
+				) : (
+					users.map((user) => (
+						<li key={user.id} className="rounded-xl border border-line bg-card p-3 text-sm">
+							<div className="flex flex-wrap items-center gap-2">
+								<Link to={`/users/${user.id}`} className="font-medium hover:underline" prefetch="none">
+									{user.name || "未命名"}
+								</Link>
+								<PayTags subscribed={Boolean(user.subscriptionStatus)} credits={user.purchasedCredits} />
+							</div>
+							<div className="break-all text-stone-600">{user.email}</div>
+							<div className="mt-1 break-all font-mono text-xs text-stone-400">{user.id}</div>
+							<dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+								<div>
+									<dt className="text-stone-500">套餐</dt>
+									<dd>{user.plan} · {planSourceLabel(user.planSource)}</dd>
+								</div>
+								<div>
+									<dt className="text-stone-500">订阅</dt>
+									<dd>
+										{user.subscriptionStatus ? (
+											<span className={`rounded px-1.5 py-0.5 ${statusTone(user.subscriptionStatus)}`}>{user.subscriptionStatus}</span>
+										) : (
+											<span className="text-stone-400">无订阅</span>
+										)}
+									</dd>
+								</div>
+								<div>
+									<dt className="text-stone-500">额度</dt>
+									<dd className="tabular-nums">{user.currentCredits} / {user.creditLimit}</dd>
+								</div>
+								<div>
+									<dt className="text-stone-500">素材</dt>
+									<dd className="tabular-nums">{user.assetCount}</dd>
+								</div>
+								<div>
+									<dt className="text-stone-500">国家</dt>
+									<dd>{user.country ?? "—"}</dd>
+								</div>
+								<div>
+									<dt className="text-stone-500">注册</dt>
+									<dd><Time value={user.createdAt} /></dd>
+								</div>
+							</dl>
+							<div className="mt-3 text-xs">
+								{user.stripeCustomerId ? (
+									<>
+										{user.subscriptionStatus || user.purchasedCredits ? null : <div className="text-amber-800">结账未付款</div>}
+										<div className="flex items-center gap-1">
+											<span className="break-all font-mono text-stone-600">{user.stripeCustomerId}</span>
+											<CopyButton value={user.stripeCustomerId} />
+										</div>
+									</>
+								) : (
+									<span className="text-stone-400">未结账</span>
+								)}
+							</div>
+							<div className="mt-3">
+								<OpenDashboard email={user.email} compact />
+							</div>
+						</li>
+					))
+				)}
+			</ul>
 			<div className="mt-3 flex justify-end gap-2 text-sm">
 				{offset > 0 ? (
 					<Link to={href(q, Math.max(0, offset - 20), billing)} className="rounded-md border border-line bg-card px-3 py-1.5" prefetch="none">

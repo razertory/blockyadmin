@@ -5,7 +5,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="min-h-screen">
 			<header className="border-b border-line bg-card">
-				<div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
+				<div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
 					<div>
 						<Link to="/" className="text-sm font-semibold tracking-tight" prefetch="none">
 							BlockyForge 管理
@@ -23,7 +23,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 					</nav>
 				</div>
 			</header>
-			<main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+			<main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">{children}</main>
 		</div>
 	);
 }

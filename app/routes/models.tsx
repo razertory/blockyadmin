@@ -38,7 +38,7 @@ export default function Models({ loaderData }: Route.ComponentProps) {
 			</div>
 			<p className="mt-2 text-sm text-stone-500">先授权登录，再打开素材详情。</p>
 			{error ? <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-bad">{error}</p> : null}
-			<div className="mt-4 overflow-x-auto rounded-xl border border-line bg-card">
+			<div className="mt-4 hidden overflow-x-auto rounded-xl border border-line bg-card md:block">
 				<table className="w-full min-w-[800px] text-left text-sm">
 					<thead className="border-b border-line text-xs text-stone-500"><tr>
 						<th className="px-3 py-2 font-medium">预览图</th><th className="px-3 py-2 font-medium">素材</th><th className="px-3 py-2 font-medium">用户 email</th><th className="px-3 py-2 font-medium">gamingId</th><th className="px-3 py-2 font-medium">模型创建时间</th><th className="px-3 py-2 font-medium">操作</th>
@@ -55,6 +55,20 @@ export default function Models({ loaderData }: Route.ComponentProps) {
 					</tbody>
 				</table>
 			</div>
+			<ul className="mt-4 space-y-3 md:hidden">
+				{models.length === 0 ? <li className="rounded-xl border border-line bg-card px-3 py-8 text-center text-sm text-stone-500">{error ? "没有可显示的模型" : "没有模型"}</li> : models.map((model) => (
+					<li key={model.assetId} className="flex gap-3 rounded-xl border border-line bg-card p-3 text-sm">
+						{model.hasThumbnail && UUID.test(model.assetId) ? <img src={`/thumbnails/${model.assetId}`} alt={`${model.assetName} 预览`} className="h-16 w-16 shrink-0 rounded-md bg-stone-200 object-cover" /> : <div className="h-16 w-16 shrink-0 rounded-md bg-stone-200" aria-label="暂无预览图" />}
+						<div className="min-w-0 flex-1">
+							<div className="truncate font-medium">{model.assetName}</div>
+							<Link to={`/users/${model.userId}`} className="block break-all text-stone-600 hover:underline" prefetch="none">{model.email}</Link>
+							<div className="mt-1 break-all font-mono text-xs text-stone-500">{model.gamingId}</div>
+							<div className="mt-1 text-xs text-stone-500"><Time value={model.createdAt} /></div>
+							<div className="mt-2 space-y-2"><OpenDashboard email={model.email} compact />{UUID.test(model.assetId) ? <a href={`${origin}/dashboard/assets/${model.assetId}`} className="block text-right text-xs text-accent hover:underline">打开素材详情</a> : null}</div>
+						</div>
+					</li>
+				))}
+			</ul>
 			<div className="mt-3 flex justify-end gap-2 text-sm">
 				{offset > 0 ? <Link to={modelHref(Math.max(0, offset - 20))} className="rounded-md border border-line bg-card px-3 py-1.5" prefetch="none">上一页</Link> : null}
 				{offset + 20 < total ? <Link to={modelHref(offset + 20)} className="rounded-md border border-line bg-card px-3 py-1.5" prefetch="none">下一页</Link> : null}
