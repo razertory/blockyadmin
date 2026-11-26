@@ -60,7 +60,75 @@ const TABLES = new Set([
 	"models",
 	"model_previews",
 	"game_configs",
+	"tasks",
 ]);
+
+export type TokenUsageDay = {
+	date: string;
+	weekday: string;
+	tasks: number;
+	withUsage: number;
+	inputTokens: number;
+	outputTokens: number;
+};
+
+export type TokenUsage = {
+	days: TokenUsageDay[];
+	totalTasks: number;
+	totalInput: number;
+	totalOutput: number;
+};
+
+const TZ = "Asia/Shanghai";
+const TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const dayKeyFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+const weekdayFormatter = new Intl.DateTimeFormat("zh-CN", { timeZone: TZ, weekday: "short" });
+
+// 最近 N 天（含今天）的每日 token 用量，按北京时间分日；传 userId 时只统计该用户。
+export async function dailyTokenUsage(env: Env, opts: { days?: number; userId?: string } = {}): Promise<TokenUsage> {
+	const clamped = Math.min(Math.max(opts.days ?? 7, 1), 30);
+	const userId = opts.userId;
+	const startMs = utcMidnightMs(dayKeyFormatter.format(new Date())) - (clamped - 1) * DAY_MS - TZ_OFFSET_MS;
+	const buckets = new Map<string, TokenUsageDay>();
+	for (let i = 0; i < clamped; i++) {
+		const date = dayKeyFormatter.format(new Date(startMs + i * DAY_MS));
+		buckets.set(date, { date, weekday: weekdayLabel(date), tasks: 0, withUsage: 0, inputTokens: 0, outputTokens: 0 });
+	}
+	await eachPage(env, "tasks", {
+		select: "created_at,prompt_tokens,completion_tokens",
+		created_at: `gte.${new Date(startMs).toISOString()}`,
+		...(userId ? { user_id: `eq.${userId}` } : {}),
+		order: "created_at.asc",
+	}, (row) => {
+		if (typeof row.created_at !== "string") return;
+		const bucket = buckets.get(dayKeyFormatter.format(new Date(row.created_at)));
+		if (!bucket) return;
+		bucket.tasks += 1;
+		if (row.prompt_tokens == null && row.completion_tokens == null) return;
+		bucket.withUsage += 1;
+		bucket.inputTokens += nullableNumber(row.prompt_tokens) ?? 0;
+		bucket.outputTokens += nullableNumber(row.completion_tokens) ?? 0;
+	});
+	const ordered = [...buckets.values()];
+	return {
+		days: ordered,
+		totalTasks: ordered.reduce((sum, day) => sum + day.tasks, 0),
+		totalInput: ordered.reduce((sum, day) => sum + day.inputTokens, 0),
+		totalOutput: ordered.reduce((sum, day) => sum + day.outputTokens, 0),
+	};
+}
+
+function utcMidnightMs(localDate: string): number {
+	const [y, m, d] = localDate.split("-").map(Number);
+	if (!y || !m || !d) throw new ForgeError(500, "日期解析失败。");
+	return Date.UTC(y, m - 1, d);
+}
+
+function weekdayLabel(date: string): string {
+	const parsed = new Date(`${date}T00:00:00+08:00`);
+	return Number.isNaN(parsed.getTime()) ? "" : weekdayFormatter.format(parsed);
+}
 
 export type BillingFilter = "subscribed" | "checked_out" | "unsubscribed" | "checkout_unpaid" | "credits";
 

@@ -15,6 +15,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 					<nav className="flex items-center gap-3 text-sm" aria-label="管理导航">
 						<Link to="/" className="text-stone-600 hover:text-ink" prefetch="none">用户</Link>
 						<Link to="/models" className="text-stone-600 hover:text-ink" prefetch="none">模型</Link>
+						<Link to="/statistics" className="text-stone-600 hover:text-ink" prefetch="none">统计</Link>
 					<Form method="post" action="/logout">
 						<button type="submit" className="rounded-md px-2 py-1 text-sm text-stone-600 hover:bg-stone-100">
 							退出

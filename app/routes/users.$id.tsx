@@ -6,6 +6,7 @@ import { OpenDashboard } from "../components/open-dashboard";
 import { PayTags } from "../components/pay-tags";
 import { Shell, Time } from "../components/shell";
 import {
+	dailyTokenUsage,
 	findBilling,
 	ForgeError,
 	userAssets,
@@ -13,10 +14,12 @@ import {
 	userPurchasedCredits,
 	userRows,
 	type AssetRow,
+	type TokenUsage,
 } from "../lib/blockyforge.server";
 import { nullableNumber, planSourceLabel, statusTone, text } from "../lib/format";
 import { noStoreHeaders, pageOffset, UUID } from "../lib/http";
 import { requireAdmin } from "../lib/session.server";
+import { estimateCostUsd, formatCompact, formatInt, formatUsd } from "../lib/tokens";
 import { userCountryNames } from "../lib/umami.server";
 
 export function meta({ data }: Route.MetaArgs) {
@@ -43,7 +46,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 		throw error;
 	}
 	if (!profile) throw new Response("用户不存在", { status: 404, headers: noStoreHeaders() });
-	const [billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits, countries] = await Promise.all([
+	const [billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits, countries, tokenUsage] = await Promise.all([
 		loadSection(findBilling(env, profile.email, profile.id)),
 		loadSection(userAssets(env, profile.id, offset)),
 		loadSection(userRows(env, "subscriptions", profile.id, "created_at.desc")),
@@ -51,8 +54,9 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 		loadSection(userRows(env, "credit_grants", profile.id, "created_at.desc")),
 		loadSection(userPurchasedCredits(env, profile.id)),
 		userCountryNames([profile.id]),
+		loadSection(dailyTokenUsage(env, { days: 30, userId: profile.id })),
 	]);
-	const error = [billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits]
+	const error = [billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits, tokenUsage]
 		.flatMap((section) => (section.ok ? [] : [section.error]))
 		.filter((message, index, all) => all.indexOf(message) === index)
 		.join(" ");
@@ -64,6 +68,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 		planGrants: planGrants.ok ? planGrants.value : [],
 		creditGrants: creditGrants.ok ? creditGrants.value : [],
 		purchasedCredits: purchasedCredits.ok ? purchasedCredits.value : false,
+		tokenUsage: tokenUsage.ok ? tokenUsage.value : null,
 		country: countries.get(profile.id) ?? null,
 		error: error || null,
 	};
@@ -87,13 +92,14 @@ function emptyUser(offset: number, error: string) {
 		planGrants: [] as Record<string, unknown>[],
 		creditGrants: [] as Record<string, unknown>[],
 		purchasedCredits: false,
+		tokenUsage: null,
 		country: null,
 		error,
 	};
 }
 
 export default function UserDetail({ loaderData, params }: Route.ComponentProps) {
-	const { profile, billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits, country, error } = loaderData;
+	const { profile, billing, assets, subscriptions, planGrants, creditGrants, purchasedCredits, tokenUsage, country, error } = loaderData;
 	if (!profile) {
 		return (
 			<Shell>
@@ -136,6 +142,8 @@ export default function UserDetail({ loaderData, params }: Route.ComponentProps)
 				<Fact label="注册时间" value={<Time value={profile.createdAt} />} />
 				<Fact label="国家" value={country ?? "—"} />
 			</section>
+
+			<TokenUsage usage={tokenUsage} />
 
 			<Panel title="订阅">
 				{subscriptions.length === 0 ? <Empty>没有订阅记录</Empty> : (
@@ -220,6 +228,118 @@ function Assets({ assets, count, internalCount = 0, offset, paramsId }: { assets
 				{offset + assets.length < count ? <Link to={assetHref(paramsId, offset + 20)} className="rounded-md border border-line bg-card px-3 py-1.5" prefetch="none">下一页</Link> : null}
 			</div>
 		</section>
+	);
+}
+
+const USAGE_BAR_HEIGHT_PX = 180;
+
+function TokenUsage({ usage }: { usage: TokenUsage | null }) {
+	if (!usage) return null;
+	const { days, totalTasks, totalInput, totalOutput } = usage;
+	const cost = estimateCostUsd(totalInput, totalOutput);
+	return (
+		<section className="mt-6">
+			<div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+				<h2 className="text-sm font-semibold">Token 用量 · 最近 30 天</h2>
+				<p className="text-xs text-stone-500">按北京时间分日 · 今天为不完整日</p>
+			</div>
+			{totalTasks === 0 ? (
+				<p className="rounded-xl border border-line bg-card px-3 py-6 text-center text-sm text-stone-500">最近 30 天没有生成任务。</p>
+			) : (
+				<div className="rounded-xl border border-line bg-card p-4">
+					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+						<UsageStat label="生成任务" value={formatInt(totalTasks)} />
+						<UsageStat label="Token 合计" value={formatInt(totalInput + totalOutput)} />
+						<UsageStat label="输入 tokens" value={formatInt(totalInput)} swatch="bg-accent" />
+						<UsageStat label="输出 tokens" value={formatInt(totalOutput)} swatch="bg-amber-500" />
+						<UsageStat label="市场价开销（预估）" value={formatUsd(cost.market)} />
+						<UsageStat label="折扣价开销（预估）" value={formatUsd(cost.discount)} />
+					</div>
+					<div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+						<h3 className="text-sm font-medium">每日 token 用量</h3>
+						<div className="flex items-center gap-4 text-xs text-stone-600">
+							<span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-accent" />输入 (prompt)</span>
+							<span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />输出 (completion)</span>
+						</div>
+					</div>
+					<UsageChart days={days} />
+					<p className="mt-3 text-xs text-stone-500">
+						费用按 GPT-6.2 Sol 等值市场价估算：未缓存输入 $2.00、命中缓存输入 $0.10、输出 $10.00（每 1M tokens），输入缓存命中率按 80% 计；折扣价为市场价的 11%。
+					</p>
+					<p className="mt-1 text-xs text-stone-500">已取消或失败的任务通常没有 token 记录，不计入用量。</p>
+				</div>
+			)}
+		</section>
+	);
+}
+
+function UsageStat({ label, value, swatch }: { label: string; value: string; swatch?: string }) {
+	return (
+		<div>
+			<p className="flex items-center gap-1.5 text-xs text-stone-500">
+				{swatch ? <span className={`inline-block h-2.5 w-2.5 rounded-sm ${swatch}`} /> : null}
+				{label}
+			</p>
+			<p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
+		</div>
+	);
+}
+
+function UsageChart({ days }: { days: TokenUsage["days"] }) {
+	const maxDay = Math.max(1, ...days.map((day) => day.inputTokens + day.outputTokens));
+	const ticks = [1, 0.75, 0.5, 0.25, 0];
+	return (
+		<>
+			<div className="mt-3 flex gap-2">
+				<div className="relative shrink-0 text-right text-[10px] leading-none text-stone-400 tabular-nums" style={{ height: `${USAGE_BAR_HEIGHT_PX}px`, width: "3.25rem" }}>
+					{ticks.map((tick) => (
+						<span key={tick} className="absolute right-0" style={{ top: `${(1 - tick) * 100}%`, transform: "translateY(-50%)" }}>
+							{formatCompact(maxDay * tick)}
+						</span>
+					))}
+				</div>
+				<div className="relative min-w-0 flex-1" style={{ height: `${USAGE_BAR_HEIGHT_PX}px` }}>
+					{ticks.map((tick) => (
+						<div key={tick} className="absolute inset-x-0 border-t border-line" style={{ top: `${(1 - tick) * 100}%` }} />
+					))}
+					<div className="absolute inset-0 flex items-end gap-px">
+						{days.map((day) => {
+							const inputPct = (day.inputTokens / maxDay) * 100;
+							const outputPct = (day.outputTokens / maxDay) * 100;
+							const title = `${day.date} 输入 ${formatInt(day.inputTokens)} · 输出 ${formatInt(day.outputTokens)} · 合计 ${formatInt(day.inputTokens + day.outputTokens)} tokens`;
+							return (
+								<div key={day.date} className="flex h-full min-w-0 flex-1 items-end" title={title}>
+									{day.inputTokens + day.outputTokens > 0 ? (
+										<div className="w-full">
+											{day.outputTokens > 0 ? (
+												<div className="w-full bg-amber-500" style={{ height: `${Math.max(1.5, outputPct)}%` }} />
+											) : null}
+											{day.inputTokens > 0 ? (
+												<div className={`w-full bg-accent ${day.outputTokens > 0 ? "" : "rounded-t-sm"}`} style={{ height: `${Math.max(1.5, inputPct)}%` }} />
+											) : null}
+										</div>
+									) : null}
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			</div>
+			<div className="mt-2 flex gap-2">
+				<div className="shrink-0" style={{ width: "3.25rem" }} />
+				<div className="flex min-w-0 flex-1 gap-px">
+					{days.map((day, index) => (
+						<div key={day.date} className="min-w-0 flex-1 text-center text-[10px] leading-tight text-stone-500">
+							{index % 5 === 4 || index === days.length - 1 ? (
+								<span className={day.date === days[days.length - 1]?.date ? "font-medium text-stone-700" : undefined}>
+									{day.date === days[days.length - 1]?.date ? "今天" : day.date.slice(5)}
+								</span>
+							) : null}
+						</div>
+					))}
+				</div>
+			</div>
+		</>
 	);
 }
 
